@@ -44,6 +44,10 @@ class Point3D():
 	
 	def get_vector4(self):
 		return np.array([self.x, self.y, self.z, 1])
+	
+	def convert_to_2D(self, point, x, y, p, win):
+		point_2D = func_3d_to_2d(self.get_vector4(), point, x, y, p, win)
+		return Point(point_2D[0], point_2D[1])
 
 
 def world_to_spectator(vector, point):
@@ -149,6 +153,18 @@ def dotted_line_draw(line, win, length = 20, color = 'black'):
 
 class House():
 	lines = []
+	faces = np.array([
+		[0, 1, 2, 3, 0], # пол
+		[6, 10, 11, 7, 6], # стена 1
+		[8, 4, 7, 11, 8], # стена 2
+		[9, 5, 6, 10, 9], # стена 3
+		[9, 5, 4, 8, 9], # стена 4
+		[12, 4, 7, 12, -1], # крыша перед
+		[17, 5, 6, 17, -1], # крыша зад
+		[4, 5, 17, 12, 4], # крыша 1
+		[7, 6, 17, 12, 7], # крыша 2
+		[4, 5, 6, 7, 4] # потолок
+		], dtype=int)
 	
 	def __init__(self, length = 0, width = 0, height1 = 0, height2 = 0):
 		self.lines.append([Point3D(length / 2, width / 2, 0), Point3D(-length / 2, width / 2, 0)])
@@ -172,6 +188,71 @@ class House():
 		self.lines.append([Point3D(length / 2, -width / 2, height1), Point3D(length / 2, 0, height1 + height2)])
 		self.lines.append([Point3D(-length / 2, width / 2, height1), Point3D(-length / 2, 0, height1 + height2)])
 		self.lines.append([Point3D(-length / 2, -width / 2, height1), Point3D(-length / 2, 0, height1 + height2)])
+		
+		self.lines.append([Point3D(-length / 2, 0, height1 + height2), Point3D(length / 2, 0, height1 + height2)])
+	
+	def weight_center(self):
+		xc = 0
+		yc = 0
+		zc = 0
+		
+		for i in range(8):
+			xc += self.lines[i][0].x
+			yc += self.lines[i][0].y
+			zc += self.lines[i][0].z
+		xc += self.lines[12][0].x
+		yc += self.lines[12][0].y
+		zc += self.lines[12][0].z
+		xc += self.lines[17][0].x
+		yc += self.lines[17][0].y
+		zc += self.lines[17][0].z
+		
+		return np.array([xc / 10, yc / 10, zc / 10])
+	
+	def body_matrix(self):
+		matrix = np.zeros((4, 9))
+		for i in range(9):
+			matrix[0][i] = (self.lines[self.faces[i][2]][0].y - self.lines[self.faces[i][0]][0].y) * (self.lines[self.faces[i][1]][0].z - self.lines[self.faces[i][0]][0].z) - (self.lines[self.faces[i][1]][0].y - self.lines[self.faces[i][0]][0].y) * (self.lines[self.faces[i][2]][0].z - self.lines[self.faces[i][0]][0].z)
+			matrix[1][i] = (self.lines[self.faces[i][1]][0].x - self.lines[self.faces[i][0]][0].x) * (self.lines[self.faces[i][2]][0].z - self.lines[self.faces[i][0]][0].z) - (self.lines[self.faces[i][2]][0].x - self.lines[self.faces[i][0]][0].x) * (self.lines[self.faces[i][1]][0].z - self.lines[self.faces[i][0]][0].z)
+			matrix[2][i] = (self.lines[self.faces[i][2]][0].x - self.lines[self.faces[i][0]][0].x) * (self.lines[self.faces[i][1]][0].y - self.lines[self.faces[i][0]][0].y) - (self.lines[self.faces[i][1]][0].x - self.lines[self.faces[i][0]][0].x) * (self.lines[self.faces[i][2]][0].y - self.lines[self.faces[i][0]][0].y)
+			matrix[3][i] = -(matrix[0][i] * self.lines[self.faces[i][0]][0].x + matrix[1][i] * self.lines[self.faces[i][0]][0].y + matrix[2][i] * self.lines[self.faces[i][0]][0].z)
+		return matrix
+	
+	def visible_faces(self, point):
+		matrix = self.body_matrix()
+		weight_center = self.weight_center()
+		result_numbers = np.array([])
+		for i in range(9):
+			if (matrix[0][i] * weight_center[0] + matrix[1][i] * weight_center[1] + matrix[2][i] * weight_center[2] + matrix[3][i] < 0):
+				for j in range(4):
+					matrix[j][i] *= -1
+			if (matrix[0][i] * point.x + matrix[1][i] * point.y + matrix[2][i] * point.z < 0):
+				result_numbers = np.append(result_numbers, i)
+		return result_numbers
+	
+	def face_draw(self, i, point, x, y, p, win, color = 'blue'):
+		j = 1
+		points = []
+		i = int(i)
+		points.append(self.lines[self.faces[i][0]][0].convert_to_2D(point, x, y, p, win))
+		while (self.faces[i][j] != self.faces[i][0]):
+			points.append(self.lines[self.faces[i][j]][0].convert_to_2D(point, x, y, p, win))
+			Line(points[j - 1], points[j]).draw(win)
+			j += 1
+		Line(points[j - 1], points[0]).draw(win)
+		face = Polygon(points)
+		face.setFill(color)
+		face.draw(win)
+	
+	def draw_visible_faces(self, point, x, y, p, win, color = 'blue', color2 = 'red', color3 = 'gray'):
+		faces_to_draw = self.visible_faces(point)
+		for i in range(faces_to_draw.size):
+			if (faces_to_draw[i] == 0):
+				self.face_draw(faces_to_draw[i], point, x, y, p, win, color3)
+			elif (faces_to_draw[i] < 5):
+				self.face_draw(faces_to_draw[i], point, x, y, p, win, color)
+			elif (faces_to_draw[i] < 10):
+				self.face_draw(faces_to_draw[i], point, x, y, p, win, color2)
 	
 	def draw(self, point, x, y, p, win, color = 'black'):
 		for i in range(17):
@@ -182,9 +263,19 @@ class House():
 		point_house_object.setOutline('red')
 		point_house_object.setFill('red')
 		point_house_object.draw(win)
+		
+		gr_points = []
+		gr_points.append(self.lines[8][0].convert_to_2D(point, x, y, p, win))
+		gr_points.append(self.lines[8][1].convert_to_2D(point, x, y, p, win))
+		gr_points.append(self.lines[11][1].convert_to_2D(point, x, y, p, win))
+		gr_points.append(self.lines[11][0].convert_to_2D(point, x, y, p, win))
+		
+		gr = Polygon(gr_points)
+		gr.setFill('blue')
+		gr.draw(win)
 
 def main():
-	win = GraphWin("House (lab2)", 700, 600, autoflush=False)
+	win = GraphWin("House (lab3)", 700, 600, autoflush=False)
 	
 	point = Point3D(5, 0, 1)
 	x = 350
@@ -206,7 +297,8 @@ def main():
 	dotted_line_draw(line_z, win, 20, 'gray')
 	
 	house = House(6, 4, 2, 1)
-	house.draw(point, x, y, p, win)
+	#house.draw(point, x, y, p, win)
+	house.draw_visible_faces(point, x, y, p, win)
 	
 	win.update()
 	
@@ -226,7 +318,8 @@ def main():
 		line_z = line_convert(o, oz, point, x, y, p, win)
 		dotted_line_draw(line_z, win, 20, 'gray')
 		
-		house.draw(point, x, y, p, win)
+		#house.draw(point, x, y, p, win)
+		house.draw_visible_faces(point, x, y, p, win)
 		
 		win.update()
 		
